@@ -603,12 +603,18 @@ export function buildCandidate(text, cfg) {
  * again into a fresh notice. Re-folding it would re-hide the content the model
  * just paid a call to unfold and can invite an expand<->compress loop.
  *
- * Matching is exact on the three shapes a caller realistically produces from the
- * `{ text, locator, truncated }` return value: the raw text, `JSON.stringify(obj)`,
- * and `JSON.stringify(obj, null, 2)`. Fingerprints use length + FNV so no second
- * copy of the (possibly large) payload is retained; a hash collision can only
- * cause a harmless skip (never information loss). Payloads shorter than 256
- * chars are ignored to avoid colliding with ordinary short outputs.
+ * Two layers of matching:
+ *  - exact: the three shapes a caller realistically produces from the
+ *    `{ text, locator, truncated }` return value — raw text, `JSON.stringify(obj)`,
+ *    `JSON.stringify(obj, null, 2)` (each also whitespace-trimmed). Fingerprints
+ *    use length + FNV, so no second copy of the payload is kept.
+ *  - embedded: the payload appearing as a SUBSTRING of a larger result (a run_code
+ *    program prefixing a label line, or concatenating a printed block with the
+ *    returned payload). This holds a bounded reference (no copy) to the raw text
+ *    and scans for containment on exact-miss.
+ * A hit only ever causes a SKIP (fall back to no compression), so a hash collision
+ * or a stray substring match can at worst skip a compressible result — never lose
+ * data. Payloads shorter than 256 chars are ignored to avoid matching ordinary output.
  */
 export function expandEchoKey(s) {
   if (typeof s !== 'string' || s.length < 256) return null
@@ -619,10 +625,13 @@ export function makeExpandEchoLedger(opts) {
   var ttlMs = (opts && opts.ttlMs) || 600000
   var cap = (opts && opts.cap) || 24
   var seen = new Map() // fingerprint -> ts
+  var refs = []        // bounded [{ text, key, ts }] for embedded-substring hits
   function prune() {
-    if (seen.size <= cap) return
-    var it = seen.keys()
-    while (seen.size > cap) { var n = it.next(); if (n.done) break; seen.delete(n.value) }
+    if (seen.size > cap) {
+      var it = seen.keys()
+      while (seen.size > cap) { var n = it.next(); if (n.done) break; seen.delete(n.value) }
+    }
+    if (refs.length > cap) refs.splice(0, refs.length - cap)
   }
   function note(value) {
     if (!value || typeof value.text !== 'string') return
@@ -645,6 +654,9 @@ export function makeExpandEchoLedger(opts) {
         if (key && !stored[key]) { stored[key] = 1; seen.delete(key); seen.set(key, now) }
       }
     }
+    // Keep a reference (no copy) to the raw payload for embedded-substring hits.
+    var raw = value.text
+    if (raw.length >= 256) refs.push({ text: raw, key: expandEchoKey(raw), ts: now })
     prune()
   }
   function hit(text, now) {
@@ -659,9 +671,20 @@ export function makeExpandEchoLedger(opts) {
       if (t - ts > ttlMs) { seen.delete(key); continue }
       return true
     }
+    // embedded: payload printed/returned inside a larger blob (label line,
+    // concatenated blocks). Newest-first; header/footer whitespace may differ,
+    // so test both the raw and trimmed needle.
+    for (var r = refs.length - 1; r >= 0; r--) {
+      var it = refs[r]
+      if (t - it.ts > ttlMs) continue
+      var rawNeedle = it.text
+      if (rawNeedle.length >= 256 && text.length >= rawNeedle.length && text.indexOf(rawNeedle) !== -1) return true
+      var trimNeedle = rawNeedle.trim()
+      if (trimNeedle !== rawNeedle && trimNeedle.length >= 256 && text.length >= trimNeedle.length && text.indexOf(trimNeedle) !== -1) return true
+    }
     return false
   }
-  function size() { return seen.size }
+  function size() { return seen.size + refs.length }
   return { note: note, hit: hit, size: size }
 }
 

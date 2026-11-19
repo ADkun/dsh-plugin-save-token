@@ -32,6 +32,15 @@ test('ledger: whitespace-padded echo still hits (trim variants)', () => {
   assert.equal(l.hit('\n\n' + text + '\n\n'), true) // extra surrounding newlines
 })
 
+test('ledger: echo embedded in a larger blob still hits (containment)', () => {
+  var l = makeExpandEchoLedger()
+  var v = payload()
+  l.note(v)
+  assert.equal(l.hit('EXPANDED len=' + v.text.length + '\n' + v.text + '\nDONE'), true)
+  assert.equal(l.hit(v.text + '\n' + v.text), true) // printed + returned
+  assert.equal(l.hit('nothing to see ' + 'z'.repeat(2000)), false)
+})
+
 test('ledger: unrelated large output misses', () => {
   var l = makeExpandEchoLedger()
   l.note(payload())
