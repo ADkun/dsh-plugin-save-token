@@ -67,7 +67,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
   utf8Bytes, estTokens, fmtInt,
   argsToString, dedupeFingerprint,
-  buildCandidate, buildNotice, effectiveMinBytes
+  buildCandidate, buildNotice, effectiveMinBytes, makeExpandEchoLedger
 } from './compress.js'
 
 export const name = 'save-token'
@@ -117,6 +117,7 @@ export function apply(ctx, config) {
   var dedupeCache = new Map()
   var originals = new Map()
   var locatorIndex = new Map()
+  var expandEcho = makeExpandEchoLedger({ ttlMs: 600000, cap: 24 })
   var lastEstBySession = new Map()
   var lastBilledBySession = new Map()
   var lastCompactAt = new Map()
@@ -262,6 +263,14 @@ export function apply(ctx, config) {
     var content = decision.content !== undefined ? decision.content : result.content
     var text = flattenPlainText(content)
     if (text === undefined) return decision
+    // Expand-echo exemption (PTC/code mode): a tool result that merely echoes
+    // bytes just retrieved from save_token_expand — typically a `run_code`
+    // program printing or returning the expand payload — must not be folded
+    // back into a fresh notice. The save_token_expand call itself is already
+    // exempt below, but in code mode the payload surfaces through the executor's
+    // stdout/return under the executor's name, so without this it would be
+    // re-compressed and re-hide what the model just paid a call to unfold.
+    if (expandEcho.hit(text)) return decision
     var isError = result.isError === true
     var sessionId = ownerSessionId(exec)
 
@@ -472,7 +481,7 @@ export function apply(ctx, config) {
     execute: function (args) {
       var key = args && typeof args.id === 'string' ? args.id.trim() : ''
       var ent = originals.get(key)
-      if (ent) return Promise.resolve({ text: ent.text, locator: ent.locator, truncated: ent.truncated === true })
+      if (ent) { var gotEnt = { text: ent.text, locator: ent.locator, truncated: ent.truncated === true }; expandEcho.note(gotEnt); return Promise.resolve(gotEnt) }
       // miss: the id expired from the text cache (eviction or restart) but
       // the spill file persists — hand back the locator instead of a dead
       // end, and use a spillStore read API transparently when one exists
@@ -485,7 +494,7 @@ export function apply(ctx, config) {
         if (store && typeof store.readText === 'function') {
           return store.readText({ locator: loc.locator }).then(function (out) {
             var t = out && (typeof out.text === 'string' && out.text.length > 0 ? out.text : (typeof out === 'string' && out.length > 0 ? out : null))
-            if (t) return { text: t, locator: loc.locator, truncated: false }
+            if (t) { var gotStore = { text: t, locator: loc.locator, truncated: false }; expandEcho.note(gotStore); return gotStore }
             return locatorFallback()
           }, function () { return locatorFallback() })
         }

@@ -595,6 +595,76 @@ export function buildCandidate(text, cfg) {
   return gate({ text: lines.text, lossless: false, strategy: lines.strided ? 'lines-strided' : 'lines' }, text, cfg)
 }
 
+// ---------- expand-echo ledger (PTC/code-mode re-compression guard) ----------
+/**
+ * Remembers the bytes a recent `save_token_expand` handed back so the SAME
+ * payload, when it reappears as a tool result (typically a `run_code` program
+ * printing or returning the expand payload in PTC/code mode), is not compressed
+ * again into a fresh notice. Re-folding it would re-hide the content the model
+ * just paid a call to unfold and can invite an expand<->compress loop.
+ *
+ * Matching is exact on the three shapes a caller realistically produces from the
+ * `{ text, locator, truncated }` return value: the raw text, `JSON.stringify(obj)`,
+ * and `JSON.stringify(obj, null, 2)`. Fingerprints use length + FNV so no second
+ * copy of the (possibly large) payload is retained; a hash collision can only
+ * cause a harmless skip (never information loss). Payloads shorter than 256
+ * chars are ignored to avoid colliding with ordinary short outputs.
+ */
+export function expandEchoKey(s) {
+  if (typeof s !== 'string' || s.length < 256) return null
+  return s.length + ':' + fnv1a(s)
+}
+
+export function makeExpandEchoLedger(opts) {
+  var ttlMs = (opts && opts.ttlMs) || 600000
+  var cap = (opts && opts.cap) || 24
+  var seen = new Map() // fingerprint -> ts
+  function prune() {
+    if (seen.size <= cap) return
+    var it = seen.keys()
+    while (seen.size > cap) { var n = it.next(); if (n.done) break; seen.delete(n.value) }
+  }
+  function note(value) {
+    if (!value || typeof value.text !== 'string') return
+    var now = Date.now()
+    var forms = [value.text]
+    try {
+      var env = { text: value.text, locator: value.locator, truncated: value.truncated === true }
+      forms.push(JSON.stringify(env))
+      forms.push(JSON.stringify(env, null, 2))
+    } catch (e) {}
+    // Store each form raw AND whitespace-trimmed (hit() also tries text.trim()),
+    // so an echoed payload with stray leading/trailing newlines (multi-line
+    // stdout, an extra blank line) still matches. delete-then-set refreshes LRU
+    // recency so a payload used again is not evicted ahead of stale ones.
+    var stored = {}
+    for (var i = 0; i < forms.length; i++) {
+      var variants = [forms[i], forms[i].trim()]
+      for (var j = 0; j < variants.length; j++) {
+        var key = expandEchoKey(variants[j])
+        if (key && !stored[key]) { stored[key] = 1; seen.delete(key); seen.set(key, now) }
+      }
+    }
+    prune()
+  }
+  function hit(text, now) {
+    if (typeof text !== 'string') return false
+    var t = now === undefined ? Date.now() : now
+    var candidates = [text, text.trim()]
+    for (var i = 0; i < candidates.length; i++) {
+      var key = expandEchoKey(candidates[i])
+      if (!key) continue
+      var ts = seen.get(key)
+      if (ts === undefined) continue
+      if (t - ts > ttlMs) { seen.delete(key); continue }
+      return true
+    }
+    return false
+  }
+  function size() { return seen.size }
+  return { note: note, hit: hit, size: size }
+}
+
 /**
  * Reversibility trailer. Verbose form (first `noticeFullTrailerCount` adopted
  * compressions per process) carries the full self-explanatory text; later

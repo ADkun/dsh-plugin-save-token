@@ -49,6 +49,14 @@
     "context-compression",
     "toon"
   ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "esbuild": "^0.25.0",
     "react": "^18.3.1"
