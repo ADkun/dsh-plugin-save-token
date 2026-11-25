@@ -1,0 +1,23 @@
+# dk 排除声明（.gitignore 语法）。
+# 人在此写目录级排除，一次写清，例如：docs/theory/**
+# 工具会把「判定不值得建卡」的精确路径追加到下方的 dk:proposed 分节。
+
+# ── 索引只装「代码」：源码 / 脚本 / 测试 ──
+
+# 构建产物（build.mjs 从 src/ 生成，改了源码要重新 build，产物本身不建卡）
+lib/
+
+# 依赖
+node_modules/
+
+# 临时工作区（诊断/探针脚本，随时清空）
+_tmp/
+
+# 基准套件：数据集（parquet/xlsx/gz）、跑批结果 json、报告 md —— 是数据不是代码
+bench/
+
+# dk:proposed
+LICENSE
+.gitignore
+AGENTS.md
+package-lock.json

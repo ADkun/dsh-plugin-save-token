@@ -20,6 +20,7 @@
  */
 
 import React from 'react'
+import { matchesPassthrough, normalizePassthroughPatterns, filterPassthroughTools, togglePassthroughTool, selectPassthroughTools, deselectPassthroughTools } from '../passthrough.js'
 
 export const inject = ['slots', 'locale']
 
@@ -58,6 +59,12 @@ const STR = {
     stripAvoided: 'saved ~{n} tok', stripCompressed: '{n} compressed', stripLossless: ' ({n} lossless)', stripReqs: '{n} reqs',
     kindCompress: 'compressed', kindLossless: 'lossless', kindDedupe: 'deduped', kindRequest: 'request',
     kindAux: 'aux-call', kindSkip: 'skipped', kindConfig: 'config', kindCompact: 'compaction',
+    passthroughTitle: 'Passthrough tools', passthroughHint: 'Full output — checked means actually exempt; unchecking removes every matching rule',
+    passthroughAddPh: 'Tool name or keyword', passthroughFilterPh: 'Filter tools by keyword',
+    passthroughAdd: 'Add', passthroughSelectAll: 'Select filtered', passthroughDeselectAll: 'Deselect filtered', passthroughRemove: 'Remove',
+    passthroughEmpty: 'No rules — every tool can be compressed', passthroughNoTools: 'No registered tools available',
+    passthroughCount: '{n} rule(s) · {m} tools covered',
+    passthroughSaveFailed: 'Could not save rules — changes reverted',
   },
   zh: {
     tagline: '结构感知 · 无损优先 · CCR',
@@ -86,6 +93,12 @@ const STR = {
     stripAvoided: '节省 ~{n} tok', stripCompressed: '压缩 {n} 次', stripLossless: '({n} 无损)', stripReqs: '{n} 次请求',
     kindCompress: '压缩', kindLossless: '无损', kindDedupe: '去重', kindRequest: '请求',
     kindAux: '辅助', kindSkip: '跳过', kindConfig: '配置', kindCompact: 'compaction',
+    passthroughTitle: '直通工具', passthroughHint: '输出原样保留——勾选即真实直通，取消勾选会移除所有命中规则',
+    passthroughAddPh: '工具名或关键词', passthroughFilterPh: '按关键词筛选工具',
+    passthroughAdd: '添加', passthroughSelectAll: '全选筛选结果', passthroughDeselectAll: '全不选筛选结果', passthroughRemove: '移除',
+    passthroughEmpty: '未配置——所有工具都参与节省', passthroughNoTools: '没有可用的已注册工具',
+    passthroughCount: '{n} 条规则 · 覆盖 {m} 个工具',
+    passthroughSaveFailed: '规则保存失败——已回滚',
   },
 }
 
@@ -97,7 +110,7 @@ function tr(locale, key, vars) {
   return s
 }
 
-const CSS = '.st-wrap{display:flex;flex-direction:column;gap:14px;font-size:13px;color:var(--dsw-alias-label-primary,#1f2937)}\n.st-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}\n.st-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}\n.st-kpi{background:var(--dsw-alias-bg-layer-2,color-mix(in srgb,var(--dsw-alias-bg-base,#f7f7f8) 82%,transparent));border:1px solid var(--dsw-alias-border-l1,#e5e7eb);border-radius:10px;padding:10px 12px;min-width:0}\n.st-kpi .st-v{font-size:19px;font-weight:650;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.st-kpi .st-s{color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;margin-top:3px;line-height:1.35}\n.st-card{background:var(--dsw-alias-bg-layer-2,color-mix(in srgb,var(--dsw-alias-bg-base,#f7f7f8) 82%,transparent));border:1px solid var(--dsw-alias-border-l1,#e5e7eb);border-radius:10px;padding:12px 14px}\n.st-title{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#6b7280);letter-spacing:.02em;text-transform:uppercase}\n.st-green{color:var(--dsw-alias-state-success-primary,#15803d)}\n.st-dim{color:var(--dsw-alias-label-secondary,#6b7280)}\n.st-bar{height:8px;border-radius:4px;background:var(--dsw-alias-brand-primary,#2563eb);opacity:.85}\n.st-barrow{display:grid;grid-template-columns:minmax(90px,160px) 1fr auto;gap:10px;align-items:center;margin-top:8px;font-size:12px}\n.st-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}\n.st-table td{padding:4px 6px;border-top:1px solid var(--dsw-alias-border-l1,#eceef1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}\n.st-badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;border:1px solid var(--dsw-alias-border-l1,#ddd)}\n.st-btn{border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:transparent;color:inherit;border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer}\n.st-btn:hover{border-color:var(--dsw-alias-brand-primary,#2563eb)}\n.st-btn.st-on{border-color:var(--dsw-alias-state-success-primary,#16a34a);background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#16a34a) 14%,transparent);color:var(--dsw-alias-state-success-primary,#15803d);font-weight:650}\n.st-btn.st-on:hover{border-color:var(--dsw-alias-state-success-primary,#16a34a);filter:brightness(1.08)}\n.st-btn.st-off{opacity:.5}\n.st-dot{display:inline-block;width:7px;height:7px;border-radius:999px;margin-right:6px;vertical-align:1px}\n.st-strip{box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;padding:1px 8px;border-radius:999px;corner-shape:round;background:0 0;border:none;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#6b7280));font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));font-variant-numeric:tabular-nums}\n.st-strip>*{flex:none}\n.st-strip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}\n.st-strip-sep{opacity:.45}\n.st-strip-m{min-width:0}\n.st-strip-tight .st-strip-m{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}'
+const CSS = '.st-wrap{display:flex;flex-direction:column;gap:14px;font-size:13px;color:var(--dsw-alias-label-primary,#1f2937)}\n.st-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}\n.st-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}\n.st-kpi{background:var(--dsw-alias-bg-layer-2,color-mix(in srgb,var(--dsw-alias-bg-base,#f7f7f8) 82%,transparent));border:1px solid var(--dsw-alias-border-l1,#e5e7eb);border-radius:10px;padding:10px 12px;min-width:0}\n.st-kpi .st-v{font-size:19px;font-weight:650;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.st-kpi .st-s{color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;margin-top:3px;line-height:1.35}\n.st-card{background:var(--dsw-alias-bg-layer-2,color-mix(in srgb,var(--dsw-alias-bg-base,#f7f7f8) 82%,transparent));border:1px solid var(--dsw-alias-border-l1,#e5e7eb);border-radius:10px;padding:12px 14px}\n.st-title{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#6b7280);letter-spacing:.02em;text-transform:uppercase}\n.st-green{color:var(--dsw-alias-state-success-primary,#15803d)}\n.st-dim{color:var(--dsw-alias-label-secondary,#6b7280)}\n.st-bar{height:8px;border-radius:4px;background:var(--dsw-alias-brand-primary,#2563eb);opacity:.85}\n.st-barrow{display:grid;grid-template-columns:minmax(90px,160px) 1fr auto;gap:10px;align-items:center;margin-top:8px;font-size:12px}\n.st-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}\n.st-table td{padding:4px 6px;border-top:1px solid var(--dsw-alias-border-l1,#eceef1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}\n.st-badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:600;border:1px solid var(--dsw-alias-border-l1,#ddd)}\n.st-btn{border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:transparent;color:inherit;border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer}\n.st-btn:hover{border-color:var(--dsw-alias-brand-primary,#2563eb)}\n.st-btn.st-on{border-color:var(--dsw-alias-state-success-primary,#16a34a);background:color-mix(in srgb,var(--dsw-alias-state-success-primary,#16a34a) 14%,transparent);color:var(--dsw-alias-state-success-primary,#15803d);font-weight:650}\n.st-btn.st-on:hover{border-color:var(--dsw-alias-state-success-primary,#16a34a);filter:brightness(1.08)}\n.st-btn.st-off{opacity:.5}\n.st-dot{display:inline-block;width:7px;height:7px;border-radius:999px;margin-right:6px;vertical-align:1px}\n.st-strip{box-sizing:border-box;display:inline-flex;align-items:center;gap:6px;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;white-space:nowrap;padding:1px 8px;border-radius:999px;corner-shape:round;background:0 0;border:none;color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary,#6b7280));font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));font-variant-numeric:tabular-nums}\n.st-strip>*{flex:none}\n.st-strip svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}\n.st-strip-sep{opacity:.45}\n.st-strip-m{min-width:0}\n.st-strip-tight .st-strip-m{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis}\n.st-input{border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:transparent;color:inherit;border-radius:8px;padding:5px 9px;font-size:12px;min-width:0;flex:1 1 150px}\n.st-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#2563eb)}\n.st-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}\n.st-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 6px 2px 9px;border-radius:999px;background:color-mix(in srgb,var(--dsw-alias-brand-primary,#2563eb) 12%,transparent);border:1px solid var(--dsw-alias-border-l1,#ddd);font-size:11px}\n.st-chip-x{border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px;font-size:13px;line-height:1}\n.st-tools{max-height:260px;overflow:auto;border:1px solid var(--dsw-alias-border-l1,#e5e7eb);border-radius:8px;margin-top:8px}\n.st-toolrow{display:grid;grid-template-columns:16px minmax(110px,180px) 1fr;gap:8px;align-items:center;padding:5px 9px;font-size:12px;border-top:1px solid var(--dsw-alias-border-l1,#eceef1);cursor:pointer}\n.st-toolrow:first-child{border-top:0}\n.st-toolrow input{accent-color:var(--dsw-alias-brand-primary,#2563eb)}\n.st-toolrow span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.st-err{color:var(--dsw-alias-state-error-primary,#b91c1c);font-size:12px;margin-top:8px}'
 
 let styled = false
 function ensureStyles() {
@@ -121,7 +134,9 @@ async function apiPost(action, body) {
     body: JSON.stringify(body || {})
   })
   if (!response.ok) throw new Error('save-token api ' + action + ': HTTP ' + response.status)
-  return response.json()
+  const data = await response.json()
+  if (data && data.ok === false) throw new Error('save-token api ' + action + ': ' + (data.error || 'request failed'))
+  return data
 }
 
 export function apply(ctx) {
@@ -192,7 +207,13 @@ export function apply(ctx) {
       const timer = setInterval(tick, intervalMs)
       return function () { alive = false; clearInterval(timer) }
     }, [])
-    return [data, setData]
+    const refresh = async function () {
+      try {
+        const d = await apiGet('dashboard')
+        setData(d)
+      } catch (e) { console.error('save-token dashboard refresh failed', e) }
+    }
+    return [data, refresh]
   }
 
   function Kpi(props) {
@@ -232,11 +253,106 @@ export function apply(ctx) {
     props.label + ': ' + (props.on ? props.t('on') : props.t('off')))
   }
 
+  /**
+   * Passthrough rules: a tool whose name matches any rule keeps its full
+   * output. The rule list is saved as a whole on every edit, so keyword
+   * rules, single picks, select-all and deselect-all take one identical path.
+   */
+  function PassthroughCard(props) {
+    const T = props.T
+    const patterns = props.patterns
+    const tools = props.tools
+    const [filter, setFilter] = React.useState('')
+    const [addText, setAddText] = React.useState('')
+    const [error, setError] = React.useState('')
+    const visible = filterPassthroughTools(tools, filter)
+    const visibleChecked = visible.some(function (tool) { return matchesPassthrough(tool.name, patterns) })
+    let covered = 0
+    for (let i = 0; i < tools.length; i++) if (matchesPassthrough(tools[i].name, patterns)) covered++
+    const save = async function (next) {
+      const previous = patterns
+      props.onChange(next)
+      setError('')
+      try {
+        const saved = await apiPost('set-passthrough', { patterns: next })
+        // Mirror the host-normalized spelling immediately; the dashboard poll
+        // skips a refetch whose JSON matches the last one it already saw.
+        props.onChange(saved && Array.isArray(saved.passthroughTools) ? saved.passthroughTools : next)
+        props.refresh()
+      } catch (e) {
+        props.onChange(previous)
+        setError(T('passthroughSaveFailed'))
+        console.error(e)
+      }
+    }
+    const add = function (value) {
+      const p = String(value || '').trim()
+      setAddText('')
+      if (p === '') return
+      const next = normalizePassthroughPatterns(patterns.concat(p))
+      if (next.length === patterns.length) return
+      save(next)
+    }
+    const toggle = function (name) { save(togglePassthroughTool(patterns, name)) }
+    const selectAll = function () { save(selectPassthroughTools(patterns, visible)) }
+    const deselectAll = function () { save(deselectPassthroughTools(patterns, visible)) }
+    return h('div', { className: 'st-card' },
+      h('div', { className: 'st-row' },
+        h('div', { className: 'st-title' }, T('passthroughTitle')),
+        h('span', { className: 'st-dim' }, T('passthroughHint'))),
+      h('div', { className: 'st-row', style: { marginTop: 8 } },
+        h('input', {
+          className: 'st-input', value: addText, placeholder: T('passthroughAddPh'),
+          onChange: function (e) { setAddText(e.target.value) },
+          onKeyDown: function (e) { if (e.key === 'Enter') { e.preventDefault(); add(addText) } }
+        }),
+        h('button', { className: 'st-btn', onClick: function () { add(addText) } }, T('passthroughAdd'))),
+      h('div', { className: 'st-row', style: { marginTop: 8 } },
+        h('input', {
+          className: 'st-input', value: filter, placeholder: T('passthroughFilterPh'),
+          onChange: function (e) { setFilter(e.target.value) }
+        }),
+        h('button', { className: 'st-btn', onClick: selectAll, disabled: visible.length === 0 }, T('passthroughSelectAll')),
+        h('button', { className: 'st-btn', onClick: deselectAll, disabled: !visibleChecked }, T('passthroughDeselectAll')),
+        h('span', { className: 'st-dim' }, T('passthroughCount', { n: String(patterns.length), m: String(covered) }))),
+      error ? h('div', { className: 'st-err' }, error) : null,
+      patterns.length === 0
+        ? h('div', { className: 'st-dim', style: { marginTop: 8 } }, T('passthroughEmpty'))
+        : h('div', { className: 'st-chips' }, patterns.map(function (p) {
+            return h('span', { className: 'st-chip', key: p }, p,
+              h('button', { className: 'st-chip-x', title: T('passthroughRemove'), onClick: function () { save(patterns.filter(function (x) { return x !== p })) } }, '×'))
+          })),
+      tools.length === 0
+        ? h('div', { className: 'st-dim', style: { marginTop: 8 } }, T('passthroughNoTools'))
+        : h('div', { className: 'st-tools' }, visible.length === 0
+            ? h('div', { className: 'st-dim', style: { padding: 8 } }, T('passthroughNoTools'))
+            : visible.map(function (tool) {
+                const checked = matchesPassthrough(tool.name, patterns)
+                return h('label', { className: 'st-toolrow', key: tool.name },
+                  h('input', { type: 'checkbox', checked: checked, onChange: function () { toggle(tool.name) } }),
+                  h('span', { style: { fontWeight: checked ? 600 : 400 } }, tool.name),
+                  h('span', { title: tool.description }, tool.description))
+              }))
+    )
+  }
+
   function Dashboard() {
     const ud = useDashboard(2500)
     const d = ud[0], refresh = ud[1]
     const L = useLocale()
     const T = function (k, v) { return tr(L, k, v) }
+    const [toolList, setToolList] = React.useState([])
+    const [passthrough, setPassthrough] = React.useState([])
+    const serverPatterns = React.useRef('[]')
+    React.useEffect(function () {
+      let alive = true
+      apiGet('tools').then(function (r) { if (alive && r && Array.isArray(r.tools)) setToolList(r.tools) }).catch(function (e) { console.error(e) })
+      return function () { alive = false }
+    }, [])
+    React.useEffect(function () {
+      const s = JSON.stringify(d ? (d.passthroughTools || []) : [])
+      if (s !== serverPatterns.current) { serverPatterns.current = s; setPassthrough(d ? (d.passthroughTools || []) : []) }
+    }, [d])
     if (!d) return h('div', { className: 'st-dim' }, T('loading'))
     const t = d.totals || {}
     const c = d.compression || {}
@@ -297,6 +413,7 @@ export function apply(ctx) {
             h('div', null, h('b', null, String(c.dedupeHits || 0)), T('cardDedupeStubbed'), h('b', null, String(cm.done || 0)), '/', String(cm.attempts || 0), T('cardDedupeCompactions'))),
           h('div', { className: 'st-s st-dim', style: { marginTop: 4 } },
             T('cardDedupeSub', { b: fmtBytes(c.dedupeSavedBytes || 0), t: fmtTok(cm.watermarkTok || cm.budgetTok || 0) })))),
+      h(PassthroughCard, { T: T, patterns: passthrough, tools: toolList, onChange: setPassthrough, refresh: refresh }),
       h('div', { className: 'st-card' },
         h('div', { className: 'st-title' }, T('topTools')),
         (d.byTool || []).length === 0 ? h('div', { className: 'st-dim', style: { marginTop: 8 } }, T('topToolsEmpty')) :

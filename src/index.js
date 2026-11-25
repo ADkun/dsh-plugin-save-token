@@ -69,6 +69,8 @@ import {
   argsToString, dedupeFingerprint,
   buildCandidate, buildNotice, effectiveMinBytes, makeExpandEchoLedger
 } from './compress.js'
+import { matchesPassthrough, normalizePassthroughPatterns } from './passthrough.js'
+import { readState, writeState } from './state.js'
 
 export const name = 'save-token'
 
@@ -95,6 +97,7 @@ export function apply(ctx, config) {
     noticeFullTrailerCount: 3,
     dedupeTtlMs: 600000,
     dedupeTtlOverrides: {},
+    passthroughTools: [],
     compactAssistEnabled: false,
     compactBudgetTokens: 120000,
     compactCooldownMs: 600000,
@@ -106,6 +109,14 @@ export function apply(ctx, config) {
       if (Object.prototype.hasOwnProperty.call(config, ck) && config[ck] !== undefined) cfg[ck] = config[ck]
     }
   }
+  // Saved panel choices win over shipped defaults: a rule cleared in the
+  // panel is written as [], so absence of this block, not an empty default,
+  // decides whether the user ever made a choice.
+  var saved = readState()
+  if (Array.isArray(saved.passthroughTools)) cfg.passthroughTools = normalizePassthroughPatterns(saved.passthroughTools)
+  if (typeof saved.compressEnabled === 'boolean') cfg.compressEnabled = saved.compressEnabled
+  if (typeof saved.dedupeEnabled === 'boolean') cfg.dedupeEnabled = saved.dedupeEnabled
+  if (typeof saved.compactAssistEnabled === 'boolean') cfg.compactAssistEnabled = saved.compactAssistEnabled
   var startedAt = Date.now()
   var totals = { requests: 0, auxRequests: 0, inputTokens: 0, cachedTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0, avoidedTokens: 0, estPromptTokens: 0 }
   var comp = { count: 0, bytesBefore: 0, bytesAfter: 0, dedupeHits: 0, dedupeSavedBytes: 0, replays: 0, losslessEncodes: 0, tabularWindows: 0, topLevelCalls: 0, nestedCalls: 0 }
@@ -253,6 +264,9 @@ export function apply(ctx, config) {
     if (exec.parent !== undefined) comp.nestedCalls++
     else comp.topLevelCalls++
     if (exec.parent !== undefined) return decision
+    // User-configured passthrough: listed tools keep every byte (no dedupe,
+    // no compression). Built-in exemptions above stay unconditional.
+    if (matchesPassthrough(exec.name, cfg.passthroughTools)) return decision
     // `read` stays exempt by design (write-file-then-read-precisely is a
     // verified information path). `save_token_expand` must stay exempt too:
     // its whole point is handing back the FULL original, so re-compressing it
@@ -511,13 +525,19 @@ export function apply(ctx, config) {
         try {
           const path = String(req.url ?? '').split('?')[0].replace(/\/+$/, '')
           const action = path.endsWith('/api/dashboard') ? 'dashboard'
+            : path.endsWith('/api/tools') ? 'tools'
+            : path.endsWith('/api/set-passthrough') ? 'set-passthrough'
             : path.endsWith('/api/set-enabled') ? 'set-enabled'
             : path.endsWith('/api/reset') ? 'reset' : ''
           if (req.method === 'GET' && action === 'dashboard') {
             sendJson(res, 200, dashboardPayload())
             return
           }
-          if (req.method === 'POST' && (action === 'set-enabled' || action === 'reset')) {
+          if (req.method === 'GET' && action === 'tools') {
+            sendJson(res, 200, { ok: true, tools: availableTools() })
+            return
+          }
+          if (req.method === 'POST' && (action === 'set-enabled' || action === 'set-passthrough' || action === 'reset')) {
             let args = {}
             try {
               const chunks = []
@@ -525,7 +545,7 @@ export function apply(ctx, config) {
               const raw = Buffer.concat(chunks).toString('utf8')
               if (raw) args = JSON.parse(raw)
             } catch (e) { args = {} }
-            sendJson(res, 200, action === 'set-enabled' ? setEnabled(args) : resetAll())
+            sendJson(res, 200, action === 'set-enabled' ? setEnabled(args) : action === 'set-passthrough' ? setPassthrough(args) : resetAll())
             return
           }
           sendJson(res, 404, { ok: false, error: 'unknown save-token endpoint' })
@@ -556,6 +576,7 @@ export function apply(ctx, config) {
     return {
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
       flags: { compress: cfg.compressEnabled, dedupe: cfg.dedupeEnabled, expandTool: true },
+      passthroughTools: cfg.passthroughTools.slice(),
       spillReady: spillAvailable,
       lastSkip: lastSkip,
       totals: totals,
@@ -577,13 +598,51 @@ export function apply(ctx, config) {
     }
   }
 
+  // Global view of registered tools — the settings panel's source of truth.
+  // schemas() is in-memory and reflects late registrations at each call.
+  function availableTools() {
+    var out = []
+    try {
+      var defs = ctx.tools.schemas()
+      for (var i = 0; i < defs.length; i++) {
+        var def = defs[i]
+        if (!def || typeof def.name !== 'string' || def.name === '') continue
+        out.push({ name: def.name, description: typeof def.description === 'string' ? def.description.slice(0, 200) : '' })
+      }
+    } catch (e) {}
+    out.sort(function (a, b) { return a.name.localeCompare(b.name) })
+    return out
+  }
+
+  function setPassthrough(args) {
+    var raw = args && Array.isArray(args.patterns) ? args.patterns : []
+    var list = normalizePassthroughPatterns(raw)
+    try {
+      writeState({ passthroughTools: list })
+    } catch (e) {
+      return { ok: false, error: 'save-token: cannot persist passthrough rules: ' + String(e && e.message ? e.message : e) }
+    }
+    cfg.passthroughTools = list
+    noteRecent('config', 'passthrough', list.length + ' tool pattern(s) set', 0)
+    return { ok: true, passthroughTools: cfg.passthroughTools.slice() }
+  }
+
   function setEnabled(args) {
     var a = args || {}
-    if (a.key === 'compress') cfg.compressEnabled = !!a.value
-    else if (a.key === 'dedupe') cfg.dedupeEnabled = !!a.value
-    else if (a.key === 'compactAssist') cfg.compactAssistEnabled = !!a.value
-    else return { ok: false }
-    noteRecent('config', a.key, (a.value ? 'enabled' : 'disabled'), 0)
+    var key = a.key === 'compress' ? 'compressEnabled'
+      : a.key === 'dedupe' ? 'dedupeEnabled'
+      : a.key === 'compactAssist' ? 'compactAssistEnabled' : ''
+    if (key === '') return { ok: false, error: 'save-token: unknown setting' }
+    var value = !!a.value
+    var patch = {}
+    patch[key] = value
+    try {
+      writeState(patch)
+    } catch (e) {
+      return { ok: false, error: 'save-token: cannot persist setting: ' + String(e && e.message ? e.message : e) }
+    }
+    cfg[key] = value
+    noteRecent('config', a.key, (value ? 'enabled' : 'disabled'), 0)
     return { ok: true, flags: { compress: cfg.compressEnabled, dedupe: cfg.dedupeEnabled, expandTool: true } }
   }
 

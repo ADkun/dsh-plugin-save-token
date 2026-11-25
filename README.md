@@ -146,6 +146,7 @@ Once installed there is nothing to operate: open **Settings → Token Saver** fo
 | `noticeFullTrailerCount` | 3 | First N adopted compressions carry the verbose retrieval notice; later ones use the compact trailer (same id + locator) |
 | `dedupeTtlMs` | 600000 | Validity window for cross-turn dedup (fingerprints are byte-exact, so a longer window is information-safe) |
 | `dedupeTtlOverrides` | {} | Per-tool TTL in ms; `0` disables dedupe for that tool (freshness-sensitive commands) |
+| `passthroughTools` | [] | Tool names or case-insensitive keywords whose output stays verbatim (skips dedupe **and** compression) |
 | `compactAssistEnabled` | false | Compaction coupling master switch — **off by default** (see cache note below) |
 | `compactBudgetTokens / compactCooldownMs` | 120000/600000 | Absolute fallback watermark and cooldown for the compaction assist |
 | `contextWindowTokens / compactWatermarkRatio` | 0/0.85 | When the model window is known, the watermark is `window × ratio` instead of the absolute budget |
@@ -171,12 +172,20 @@ v2.4.0 closing items:
 - `save_token_expand` survives eviction and restarts: an id→locator side index outlives the text cache, so a miss returns the spill locator (with a transparent `spillStore.readText` attempt when the host offers one) instead of a dead end.
 - Top-level vs nested tool calls are counted on the panel — the nesting exemption currently skips compression for subagent-internal calls, and this counter finally quantifies that unexploited surface before anyone flips it.
 
+Passthrough tools (settings panel; no rules by default):
+
+- `passthroughTools` holds exact tool names or case-insensitive substrings. A matching tool returns byte-for-byte: neither dedupe nor compression touches it. Use it for tools whose raw output must survive.
+- The panel lists every registered tool, filters by keyword, and offers one-click **Select filtered** / **Deselect filtered** (select saves exact names; deselect drops every rule covering a visible tool, so an accidental select is one click to undo). Add / remove / select-all / deselect-all all use `/save-token/api/set-passthrough`; `/save-token/api/tools` feeds the registry view.
+- Matching lives in `src/passthrough.js`, shared by host and panel — what the panel shows checked is exactly what the host exempts.
+- Rules and panel flags are saved to `$DSH_HOME/save-token-state.json` (`~/.dsh` when unset) and restored on startup. A saved choice wins over static config defaults, so clearing the list persists as an empty list; a failed write aborts the change and the panel rolls back.
+
 ---
 
 ## How it works (30-second version)
 
 ```
 tool returns ──► tools/post-execute (prepend)
+             ├─ name in passthroughTools? ── keep every byte (no dedupe, no compression)
              ├─ size ≤ threshold? ────────── pass through
              ├─ byte-identical within 90s? ─ spill original → replace with dedup stub
              ├─ JSON with uniform array? ─── TOON lossless re-encode (zero loss)
@@ -207,6 +216,8 @@ dsh-plugin-save-token/
 ├── src/
 │   ├── index.js          ← Host half: waterfall hooks / orchestration / tool registration / API routes
 │   ├── compress.js       ← pure compression brain (estimators, TOON tabular, gates, notices)
+│   ├── passthrough.js    ← shared name/pattern matcher for the passthrough whitelist
+│   ├── state.js          ← restart-safe panel settings under the DSH home
 │   └── client/index.js   ← Client half: Dashboard panel + input-box live strip
 ├── test/                 ← node --test unit suite pinning the compression brain
 └── lib/                  ← built artifacts (committed, so git installs need no build step)

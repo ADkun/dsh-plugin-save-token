@@ -22,6 +22,8 @@
   },
   "api": [
     "/save-token/api/dashboard",
+    "/save-token/api/tools",
+    "/save-token/api/set-passthrough",
     "/save-token/api/set-enabled",
     "/save-token/api/reset"
   ],
@@ -45,6 +47,7 @@
     "noticeFullTrailerCount": 3,
     "dedupeTtlMs": 600000,
     "dedupeTtlOverrides": {},
+    "passthroughTools": [],
     "compactAssistEnabled": false,
     "compactBudgetTokens": 120000,
     "compactCooldownMs": 600000,

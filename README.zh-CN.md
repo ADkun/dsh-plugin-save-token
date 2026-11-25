@@ -142,6 +142,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-plugin-save-token
 | `noticeFullTrailerCount` | 3 | 前 N 次压缩使用完整取回通知，其后使用紧凑 trailer（id 与 locator 保留） |
 | `dedupeTtlMs` | 600000 | 跨轮去重的有效窗口（指纹字节级全等，长窗口信息安全） |
 | `dedupeTtlOverrides` | {} | 分工具 TTL（毫秒）；`0` 表示该工具永不去重（新鲜度敏感命令） |
+| `passthroughTools` | [] | 工具名或大小写不敏感关键词，命中者输出原样保留（跳过去重**和**压缩） |
 | `compactAssistEnabled` | false | compaction 联动总开关——**默认关闭**（见下方缓存说明） |
 | `compactBudgetTokens / compactCooldownMs` | 120000/600000 | compaction 联动的绝对水位兜底与冷却 |
 | `contextWindowTokens / compactWatermarkRatio` | 0/0.85 | 已知模型窗口时，水位 = `窗口 × 比例`，替代绝对预算 |
@@ -167,12 +168,20 @@ v2.4.0 收尾项：
 - `save_token_expand` 可跨淘汰与重启：id→locator 侧索引独立于文本缓存存活，未命中时返回落盘 locator（宿主提供 `spillStore.readText` 时透明尝试直读），不再给死胡同。
 - 面板新增顶层/嵌套工具调用计数——嵌套豁免目前跳过子 agent 内部调用的压缩，这个计数让"未开发的收益面"第一次有了数字，再决定是否动豁免。
 
+直通工具（设置面板，默认无规则）：
+
+- `passthroughTools` 存精确工具名或大小写不敏感子串；命中的工具逐字节返回，去重与压缩都不碰。给必须保留原始输出的工具用。
+- 面板列出所有已注册工具，支持关键词筛选与一键**全选筛选结果** / **全不选筛选结果**（全选写入精确名；全不选移除所有命中当前可见工具的规则，误点全选可一键撤销）；添加/移除/全选/全不选统一走 `/save-token/api/set-passthrough`，工具清单来自 `/save-token/api/tools`。
+- 匹配逻辑在 `src/passthrough.js`，宿主与面板共用——面板勾选什么，宿主就豁免什么。
+- 规则与面板开关写入 `$DSH_HOME/save-token-state.json`（未设置时为 `~/.dsh`），启动时读回；面板选择优先于静态配置默认值，清空名单会持久化为 `[]`。写盘失败直接取消本次变更并回滚面板。
+
 ---
 
 ## 工作原理（30 秒版）
 
 ```
 工具返回 ──► tools/post-execute（prepend）
+             ├─ 命中 passthroughTools？ ── 逐字节放行（不去重、不压缩）
              ├─ 体积 ≤ 阈值？ ──────────── 原样放行
              ├─ 90s 内字节级重复？ ─────── spill 原文 → 替换为 dedup stub
              ├─ JSON 且含均匀数组？ ────── TOON 无损重编码（零损失）
@@ -201,6 +210,8 @@ dsh-plugin-save-token/
 ├── src/
 │   ├── index.js        ← Host 半：瀑布挂接 / 编排 / 工具注册 / API 路由
 │   ├── compress.js     ← 纯函数压缩核心（估算器 / TOON 表化 / 双门控 / 通知）
+│   ├── passthrough.js  ← 宿主与面板共用的直通工具名/关键词匹配器
+│   ├── state.js        ← 面板设置的重启安全存储（DSH home 下）
 │   └── client/index.js ← Client 半：Dashboard 面板 + 输入框实时条
 ├── test/               ← node --test 单元测试，钉住压缩核心行为
 └── lib/                ← 构建产物（入库提交，git 安装免构建）
